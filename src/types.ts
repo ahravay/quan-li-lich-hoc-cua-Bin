@@ -16,6 +16,14 @@ export type MonthData = {
 
 export type AppState = Record<number, MonthData>;
 
+export type LogEntry = {
+  id: string;
+  timestamp: string;      // ISO String text representation
+  userEmail: string;      // Gmail of the editor
+  action: string;         // Log description (e.g., Change status of day 5)
+  category: 'status' | 'note' | 'finance' | 'system';
+};
+
 export const getInitialMonthData = (): MonthData => ({
   prevBalance: 0,
   closingBalance: 0,
@@ -29,3 +37,4 @@ export const getInitialMonthData = (): MonthData => ({
 
 export const MEAL_PRICE = 25000; // 25.000đ/buổi
 export const YEAR = 2026;
+
