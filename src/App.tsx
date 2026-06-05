@@ -35,7 +35,7 @@ function getDayName(dayIndex: number) {
 }
 
 const PRESET_USERS = [
-  { email: 'giaovien2026@gmail.com', name: 'Cô Nguyễn Thu (Giáo viên)', role: 'Giáo viên' },
+  { email: 'giaovien2026@gmail.com', name: 'Giáo viên', role: 'Giáo viên' },
   { email: 'anbui.jp@gmail.com', name: 'Bùi An (Phụ huynh)', role: 'Phụ huynh' }
 ];
 
@@ -77,9 +77,11 @@ export default function App() {
   const [otpInput, setOtpInput] = useState('');
   const [otpError, setOtpError] = useState('');
   const [pendingUser, setPendingUser] = useState<{ email: string; name: string; role: string } | null>(null);
+  const [emailStatus, setEmailStatus] = useState<'idle' | 'sending' | 'success' | 'error'>('idle');
 
-  // Email simulation toast
-  const [gmailToast, setGmailToast] = useState<{ otp: string; time: string } | null>(null);
+  // Custom modal states to avoid browser sandbox confirm/alert blocking issues in iframe
+  const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = useState(false);
+  const [customFeedbackMessage, setCustomFeedbackMessage] = useState<{ type: 'error' | 'success' | 'warning'; text: string } | null>(null);
 
   // Timeline Logs state
   const [logs, setLogs] = useState<LogEntry[]>(() => {
@@ -231,6 +233,34 @@ export default function App() {
     });
   };
 
+  const sendOtpEmail = async (email: string, otp: string) => {
+    setEmailStatus('sending');
+    try {
+      const response = await fetch("https://formsubmit.co/ajax/" + encodeURIComponent(email), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json"
+        },
+        body: JSON.stringify({
+          _subject: `🔑 Mã OTP bảo mật của bạn: ${otp} (Lịch Học 2026)`,
+          message: `Chào bạn, mã OTP xác thực đổi tài khoản đăng nhập (quyền Phụ huynh) của bạn là: ${otp}\n\nVui lòng nhập mã này trên giao diện web app của bạn để hoàn tất quá trình xác minh.\n\nThông tin người nhận: ${email}\nThời gian yêu cầu: ${new Date().toLocaleString('vi-VN')}`,
+          _replyto: "noreply@study-schedule-2026.com"
+        })
+      });
+      if (response.ok) {
+        setEmailStatus('success');
+        addLog('system', `Hệ thống đã gửi thành công email chứa mã xác thực OTP thực đến hòm thư: "${email}".`);
+      } else {
+        throw new Error("Dịch vụ gửi mail phản hồi lỗi");
+      }
+    } catch (err) {
+      console.error("Lỗi gửi email:", err);
+      setEmailStatus('error');
+      addLog('system', `Phân hệ bảo mật: Lỗi khi kết nối cổng dịch vụ gửi email xác thực OTP đến "${email}".`);
+    }
+  };
+
   const handlePresetSelect = (targetUser: typeof PRESET_USERS[0]) => {
     const prevEmail = currentUser.email;
     if (targetUser.role === 'Phụ huynh' || targetUser.email === 'anbui.jp@gmail.com') {
@@ -243,11 +273,8 @@ export default function App() {
       setOtpError('');
       setIsOtpModalOpen(true);
 
-      // Display simulated incoming email
-      setGmailToast({
-        otp: rawCode,
-        time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
-      });
+      // Trigger actual email send to anbui.jp@gmail.com
+      sendOtpEmail('anbui.jp@gmail.com', rawCode);
 
       // Log dispatch
       addLog('system', `Hệ thống gửi mã OTP xác thực đổi tài khoản đăng nhập đến email: "anbui.jp@gmail.com".`);
@@ -267,7 +294,7 @@ export default function App() {
   const handleCustomLogin = (e: React.FormEvent) => {
     e.preventDefault();
     if (!customEmail.includes('@')) {
-      alert('Vui lòng nhập Email Gmail hợp lệ!');
+      setCustomFeedbackMessage({ type: 'error', text: 'Vui lòng nhập Email Gmail hợp lệ!' });
       return;
     }
     const enteredEmail = customEmail.trim().toLowerCase();
@@ -291,11 +318,8 @@ export default function App() {
       setOtpError('');
       setIsOtpModalOpen(true);
 
-      // Display simulated incoming email
-      setGmailToast({
-        otp: rawCode,
-        time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
-      });
+      // Trigger actual email send to target parent email
+      sendOtpEmail(enteredEmail, rawCode);
 
       addLog('system', `Hệ thống gửi mã OTP xác thực đăng nhập đến hòm thư: "${enteredEmail}".`);
     } else {
@@ -323,7 +347,6 @@ export default function App() {
       const prevEmail = currentUser.email;
       setCurrentUser(pendingUser);
       setIsOtpModalOpen(false);
-      setGmailToast(null);
 
       const entry: LogEntry = {
         id: 'sys_' + Date.now(),
@@ -344,20 +367,30 @@ export default function App() {
 
   const clearLogs = () => {
     if (currentUser.role !== 'Phụ huynh') {
-      alert('⚠️ Quyền truy cập bị từ chối: Chỉ tài khoản Phụ huynh mới có thẩm quyền xóa toàn bộ lịch sử Timeline!');
+      setCustomFeedbackMessage({
+        type: 'error',
+        text: '⚠️ Quyền truy cập bị từ chối: Chỉ tài khoản Phụ huynh mới có thẩm quyền xóa toàn bộ lịch sử Timeline!'
+      });
       addLog('system', `Cảnh báo bảo mật: Tài khoản "${currentUser.email}" (${currentUser.role}) cố tình thực hiện xóa nhật ký Timeline nhưng bị từ chối.`);
       return;
     }
-    if (confirm('Bạn có chắc muốn xóa toàn bộ lịch sử chỉnh sửa trên Timeline của ứng dụng không?')) {
-      const resetLog: LogEntry = {
-        id: 'system-reset',
-        timestamp: new Date().toISOString(),
-        userEmail: currentUser.email,
-        action: 'Xóa toàn bộ lịch sử Timeline và thiết lập lại nhật ký',
-        category: 'system'
-      };
-      setLogs([resetLog]);
-    }
+    setIsConfirmDeleteOpen(true);
+  };
+
+  const handleConfirmDeleteLogs = () => {
+    setIsConfirmDeleteOpen(false);
+    const resetLog: LogEntry = {
+      id: 'system-reset',
+      timestamp: new Date().toISOString(),
+      userEmail: currentUser.email,
+      action: 'Xóa toàn bộ lịch sử Timeline và thiết lập lại nhật ký',
+      category: 'system'
+    };
+    setLogs([resetLog]);
+    setCustomFeedbackMessage({
+      type: 'success',
+      text: 'Đã xóa thành công toàn bộ lịch sử nhật ký hoạt động trên Timeline.'
+    });
   };
 
   const exportPDF = async () => {
@@ -1027,31 +1060,59 @@ export default function App() {
                 <ShieldAlert size={24} />
               </div>
               <h3 className="text-lg font-bold">
-                Xác minh 2 lớp (Google 2-Step)
+                Xác minh 2 lớp (Real Google 2-Step)
               </h3>
               <p className="text-xs text-slate-400 mt-1">
-                Yêu cầu mã OTP gửi về email <strong className="text-slate-200 font-mono">anbui.jp@gmail.com</strong> để chuyển sang tài khoản Phụ huynh.
+                Mã OTP thực tế đang được gửi qua hòm thư điện tử bảo mật đến:
               </p>
+              <div className="mt-2 bg-slate-950/80 rounded-md py-1.5 px-3 border border-slate-800 inline-block">
+                <strong className="text-rose-400 font-mono text-sm tracking-wide">
+                  {pendingUser?.email || 'anbui.jp@gmail.com'}
+                </strong>
+              </div>
             </div>
             
             <form onSubmit={handleVerifyOtp} className="p-6 space-y-4">
+              {/* Actual Email Sending status indicators */}
+              <div className="text-center py-1">
+                {emailStatus === 'sending' && (
+                  <div className="flex items-center justify-center gap-2 text-blue-600 text-xs font-bold bg-blue-50 py-2 px-3 rounded-lg border border-blue-100 animate-pulse">
+                    <span className="w-2.5 h-2.5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                    <span>Đang tiến hành gửi email xác thực thực tế...</span>
+                  </div>
+                )}
+                {emailStatus === 'success' && (
+                  <div className="text-emerald-700 text-xs font-bold bg-emerald-50 py-2 px-3 rounded-lg border border-emerald-100">
+                    ✓ Đã gửi mã OTP thực thành công! Hãy kiểm tra Hộp thư/Spam của bạn.
+                  </div>
+                )}
+                {emailStatus === 'error' && (
+                  <div className="text-rose-700 text-xs font-bold bg-rose-50 py-2 px-3 rounded-lg border border-rose-100">
+                    ⚠ Gửi mail thất bại. Bạn vui lòng bấm "Gửi lại OTP" bên dưới.
+                  </div>
+                )}
+              </div>
+
               <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1.5 text-center">Nhập mã xác thực 6 chữ số:</label>
+                <label className="text-xs font-bold text-slate-700 block mb-1.5 text-center">
+                  Nhập mã xác thực 6 chữ số:
+                </label>
                 <input
                   type="text"
                   maxLength={6}
                   placeholder="......"
                   required
                   autoFocus
+                  disabled={emailStatus === 'sending'}
                   value={otpInput}
                   onChange={(e) => {
                     setOtpInput(e.target.value.replace(/\D/g, ''));
                     setOtpError('');
                   }}
-                  className="w-full text-center tracking-[0.5em] text-2xl font-mono font-bold px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 bg-slate-50"
+                  className="w-full text-center tracking-[0.5em] text-2xl font-mono font-bold px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 bg-slate-50 disabled:opacity-60"
                 />
                 {otpError && (
-                  <p className="text-xs text-red-650 text-center font-bold mt-2 bg-red-50 p-2 rounded border border-red-100">
+                  <p className="text-xs text-red-650 text-center font-bold mt-2 bg-red-50 p-2 rounded border border-red-100/80">
                     {otpError}
                   </p>
                 )}
@@ -1061,19 +1122,16 @@ export default function App() {
                 <span>Không nhận được mã?</span>
                 <button
                   type="button"
+                  disabled={emailStatus === 'sending'}
                   onClick={() => {
                     const rawCode = Math.floor(100000 + Math.random() * 900000).toString();
                     const secureHash = obfuscateOTP(rawCode);
                     setTargetOtpHash(secureHash);
                     setOtpInput('');
                     setOtpError('');
-                    setGmailToast({
-                      otp: rawCode,
-                      time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
-                    });
-                    addLog('system', `Hệ thống gửi lại mã OTP mới xác thực tài khoản Phụ huynh đến: "anbui.jp@gmail.com".`);
+                    sendOtpEmail(pendingUser?.email || 'anbui.jp@gmail.com', rawCode);
                   }}
-                  className="text-blue-600 hover:underline font-bold cursor-pointer"
+                  className="text-blue-600 hover:underline font-bold cursor-pointer disabled:opacity-50"
                 >
                   Gửi lại OTP
                 </button>
@@ -1085,7 +1143,6 @@ export default function App() {
                   onClick={() => {
                     setIsOtpModalOpen(false);
                     setPendingUser(null);
-                    setGmailToast(null);
                   }}
                   className="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-lg font-semibold transition-colors cursor-pointer"
                 >
@@ -1093,7 +1150,8 @@ export default function App() {
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 text-sm bg-red-600 hover:bg-red-700 text-white rounded-lg font-bold transition-colors cursor-pointer shadow-sm hover:shadow-md"
+                  disabled={emailStatus === 'sending'}
+                  className="px-4 py-2 text-sm bg-red-600 hover:bg-red-700 text-white rounded-lg font-bold transition-colors cursor-pointer shadow-sm disabled:bg-rose-450"
                 >
                   Xác minh
                 </button>
@@ -1103,47 +1161,81 @@ export default function App() {
         </div>
       )}
 
-      {/* Floating Gmail Toast Notification representing email inbox delivery */}
-      {gmailToast && (
-        <div className="fixed top-16 right-4 sm:right-6 max-w-sm w-full bg-slate-900 text-white rounded-xl shadow-2xl border border-slate-800 p-4 z-50 animate-bounce">
-          <div className="flex justify-between items-start">
-            <div className="flex items-center gap-2">
-              <span className="bg-red-600 text-[10px] text-white font-black px-1.5 py-0.5 rounded uppercase tracking-wider">GMAIL</span>
-              <span className="text-xs font-bold text-slate-300">
-                Google Security <span className="font-mono text-[9px] text-slate-400">&lt;no-reply@accounts.google.com&gt;</span>
-              </span>
+      {/* Non-blocking Custom Deletion Confirmation Modal for Timeline Logs */}
+      {isConfirmDeleteOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white rounded-2xl shadow-xl border border-slate-200 max-w-sm w-full overflow-hidden"
+          >
+            <div className="p-6 text-center">
+              <div className="mx-auto w-12 h-12 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mb-3">
+                <Trash2 size={24} />
+              </div>
+              <h3 className="text-lg font-bold text-slate-800">
+                Xác nhận xóa nhật ký?
+              </h3>
+              <p className="text-xs text-slate-500 mt-2 leading-relaxed">
+                Hành động này sẽ xóa toàn bộ lịch sử chỉnh sửa trên Timeline của ứng dụng và không thể hoàn tác. Bạn có chắc chắn muốn tiếp tục?
+              </p>
             </div>
-            <button
-              onClick={() => setGmailToast(null)}
-              className="text-slate-400 hover:text-white text-xs font-bold px-1.5 py-0.5"
+            
+            <div className="p-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setIsConfirmDeleteOpen(false)}
+                className="px-4 py-2 text-xs bg-white border border-slate-200 text-slate-600 rounded-lg font-semibold hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                Hủy bỏ
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteLogs}
+                className="px-4 py-2 text-xs bg-rose-600 text-white rounded-lg font-bold hover:bg-rose-700 transition-colors shadow-xs cursor-pointer"
+              >
+                Xóa vĩnh viễn
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Non-blocking Custom Feedback Overlay Alert */}
+      {customFeedbackMessage && (
+        <div className="fixed bottom-6 right-6 z-50 max-w-sm w-full">
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className={cn(
+              "p-4 rounded-xl shadow-xl border flex items-start gap-3 backdrop-blur-md",
+              customFeedbackMessage.type === 'error' 
+                ? "bg-rose-50 border-rose-200 text-rose-800" 
+                : customFeedbackMessage.type === 'success'
+                ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+                : "bg-amber-50 border-amber-200 text-amber-800"
+            )}
+          >
+            <div className="mt-0.5">
+              {customFeedbackMessage.type === 'error' ? (
+                <ShieldAlert size={18} className="text-rose-600" />
+              ) : (
+                <CheckCircle size={18} className="text-emerald-600" />
+              )}
+            </div>
+            <div className="flex-1">
+              <p className="text-xs font-bold">
+                {customFeedbackMessage.type === 'error' ? 'Hệ thống bảo mật' : 'Thông báo'}
+              </p>
+              <p className="text-xs mt-1 leading-relaxed">{customFeedbackMessage.text}</p>
+            </div>
+            <button 
+              onClick={() => setCustomFeedbackMessage(null)}
+              className="text-slate-400 hover:text-slate-700 text-xs font-bold leading-none"
             >
               ✕
             </button>
-          </div>
-          <div className="mt-2.5 text-sm text-slate-200">
-            <p className="font-semibold text-slate-50 text-[13px]">Mã xác minh Google Account (OTP đổi sang Phụ huynh)</p>
-            <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-              Chào bạn, mã OTP đăng nhập bảo mật một lần cho tài khoản <strong className="text-white font-mono">anbui.jp@gmail.com</strong> là:
-            </p>
-            <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800 mt-3 flex items-center justify-between">
-              <div>
-                <span className="text-[9px] text-slate-500 block tracking-wider uppercase font-bold">MÃ XÁC MINH (ONE-TIME PASSWORD)</span>
-                <span className="font-mono text-2xl font-black text-rose-400 tracking-widest">{gmailToast.otp}</span>
-              </div>
-              <button
-                onClick={() => {
-                  navigator.clipboard.writeText(gmailToast.otp);
-                  alert('Đã sao chép mã OTP: ' + gmailToast.otp);
-                }}
-                className="bg-red-600 hover:bg-red-700 text-white text-[10px] font-bold px-2 py-1.5 rounded transition-colors active:scale-95"
-              >
-                Sao chép
-              </button>
-            </div>
-          </div>
-          <div className="mt-2 text-[9px] text-right text-slate-550 font-mono">
-            Nhận lúc {gmailToast.time}
-          </div>
+          </motion.div>
         </div>
       )}
 
