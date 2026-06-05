@@ -1,0 +1,6 @@
+{
+  "name": "Quản lý Lịch Học 2026",
+  "description": "Ứng dụng web bảng tính dạng lưới giúp quản lý lịch học cá nhân, theo dõi các buổi học/nghỉ, tự động tính học phí, phụ phí, và xuất báo cáo PDF.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
