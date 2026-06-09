@@ -1,0 +1,56 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper to check valid document ID
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Validation for MonthData
+    function isValidMonthData(data) {
+      return data.keys().hasAll(['prevBalance', 'closingBalance', 'pricePerSession', 'electricity', 'boarding', 'internet', 'oldDebt', 'days'])
+        && data.keys().size() == 8
+        && data.prevBalance is number
+        && data.closingBalance is number
+        && data.pricePerSession is number
+        && data.electricity is number
+        && data.boarding is number
+        && data.internet is number
+        && data.oldDebt is number
+        && data.days is map;
+    }
+
+    // Validation for LogEntry
+    function isValidLogEntry(data) {
+      return data.keys().hasAll(['id', 'timestamp', 'userEmail', 'action', 'category'])
+        && data.keys().size() == 5
+        && data.id is string
+        && data.id.size() <= 128
+        && data.timestamp is string
+        && data.userEmail is string
+        && data.action is string
+        && data.category is string
+        && data.category in ['status', 'note', 'finance', 'system'];
+    }
+
+    // Schedule collection
+    match /schedule/{monthId} {
+      allow read: if true;
+      allow create, update: if isValidId(monthId) && isValidMonthData(request.resource.data);
+      allow delete: if false;
+    }
+
+    // Logs collection
+    match /logs/{logId} {
+      allow read: if true;
+      allow create, update: if isValidId(logId) && isValidLogEntry(request.resource.data);
+      allow delete: if true;
+    }
+  }
+}

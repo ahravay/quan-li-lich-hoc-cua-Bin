@@ -15,11 +15,31 @@ import {
   Activity,
   CheckCircle,
   FileSpreadsheet,
-  ShieldAlert
+  ShieldAlert,
+  Cloud,
+  CloudLightning,
+  Loader2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
 import { AppState, getInitialMonthData, MEAL_PRICE, YEAR, MonthData, DailyData, LogEntry } from './types';
+import {
+  isFirebaseConfigured,
+  loadScheduleFromCloud,
+  saveMonthToCloud,
+  loadLogsFromCloud,
+  saveLogToCloud,
+  clearAllLogsInCloud
+} from './firebase';
+import {
+  fetchDbStatus,
+  loadScheduleFromBackend,
+  saveMonthToBackend,
+  loadLogsFromBackend,
+  saveLogToBackend,
+  clearAllLogsInBackend,
+  DbStatus
+} from './mongoSync';
 
 function getDaysInMonth(month: number) {
   return new Date(YEAR, month, 0).getDate();
@@ -108,7 +128,15 @@ export default function App() {
 
   const exportRef = useRef<HTMLDivElement>(null);
 
-  // Persists
+  const [dbStatus, setDbStatus] = useState<DbStatus>({
+    hasMongoUriEnv: false,
+    isMongoConnected: false,
+    storageType: 'local_json'
+  });
+  const [isBackendActive, setIsBackendActive] = useState(false);
+  const [isLoadingCloud, setIsLoadingCloud] = useState(true);
+
+  // Persists to local storage as fallback
   useEffect(() => {
     localStorage.setItem('study_schedule_2026', JSON.stringify(appData));
   }, [appData]);
@@ -120,6 +148,36 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('study_schedule_2026_logs', JSON.stringify(logs));
   }, [logs]);
+
+  // Debounce saving of altered MonthData models
+  const prevAppDataRef = useRef<AppState>(appData);
+
+  useEffect(() => {
+    const changedMonths: number[] = [];
+    for (let m = 1; m <= 12; m++) {
+      if (JSON.stringify(appData[m]) !== JSON.stringify(prevAppDataRef.current[m])) {
+        changedMonths.push(m);
+      }
+    }
+    
+    if (changedMonths.length === 0) return;
+
+    const timer = setTimeout(async () => {
+      for (const m of changedMonths) {
+        const mData = appData[m];
+        if (mData) {
+          if (isBackendActive) {
+            await saveMonthToBackend(m, mData);
+          } else if (isFirebaseConfigured) {
+            await saveMonthToCloud(m, mData);
+          }
+        }
+      }
+      prevAppDataRef.current = appData;
+    }, 1000); // 1s sync debounce
+
+    return () => clearTimeout(timer);
+  }, [appData, isBackendActive]);
 
   // Lazy dynamic default values transfer from Month (N-1) to Month (N)
   useEffect(() => {
@@ -139,11 +197,101 @@ export default function App() {
     }
   }, [activeMonth]);
 
+  // Initial cloud loading and bootstrapping empty datastores
+  useEffect(() => {
+    async function initDataPersistence() {
+      try {
+        // Try querying the backend status endpoint
+        const bStatus = await fetchDbStatus();
+        setDbStatus(bStatus);
+        setIsBackendActive(true);
+
+        const backendSched = await loadScheduleFromBackend();
+        const backendLogs = await loadLogsFromBackend();
+
+        if (backendSched) {
+          setAppData(backendSched);
+          prevAppDataRef.current = backendSched;
+        } else {
+          // Push existing local elements for immediate sync
+          for (let m = 1; m <= 12; m++) {
+            const mData = appData[m];
+            if (mData) {
+              await saveMonthToBackend(m, mData);
+            }
+          }
+          prevAppDataRef.current = appData;
+        }
+
+        if (backendLogs) {
+          setLogs(backendLogs);
+        } else {
+          for (const l of logs) {
+            await saveLogToBackend(l);
+          }
+        }
+        setIsLoadingCloud(false);
+      } catch (err) {
+        console.warn('Backend server and MongoDB are unreachable. Running purely client-side:', err);
+        setIsBackendActive(false);
+
+        // Fallback to Firebase configuration if provided
+        if (isFirebaseConfigured) {
+          try {
+            const cloudSchedule = await loadScheduleFromCloud();
+            const cloudLogs = await loadLogsFromCloud();
+
+            if (cloudSchedule) {
+              setAppData(cloudSchedule);
+              prevAppDataRef.current = cloudSchedule;
+            } else {
+              for (let m = 1; m <= 12; m++) {
+                const mData = appData[m];
+                if (mData) {
+                  await saveMonthToCloud(m, mData);
+                }
+              }
+              prevAppDataRef.current = appData;
+            }
+
+            if (cloudLogs) {
+              setLogs(cloudLogs);
+            } else {
+              for (const l of logs) {
+                await saveLogToCloud(l);
+              }
+            }
+          } catch (fireErr) {
+            console.error('Firebase synchronizer error:', fireErr);
+          } finally {
+            setIsLoadingCloud(false);
+          }
+        } else {
+          setIsLoadingCloud(false);
+        }
+      }
+    }
+
+    initDataPersistence();
+  }, []);
+
   const monthData = appData[activeMonth];
   const daysCount = getDaysInMonth(activeMonth);
   const daysArray = Array.from({ length: daysCount }, (_, i) => i + 1);
 
-  // Reusable function to dispatch logs
+  // Central log dispatcher supporting offline and transaction syncs
+  const addLogEntry = (entry: LogEntry) => {
+    setLogs(prev => {
+      const updated = [entry, ...prev].slice(0, 1000);
+      return updated;
+    });
+    if (isBackendActive) {
+      saveLogToBackend(entry);
+    } else if (isFirebaseConfigured) {
+      saveLogToCloud(entry);
+    }
+  };
+
   const addLog = (category: LogEntry['category'], action: string) => {
     const newEntry: LogEntry = {
       id: 'log_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
@@ -152,7 +300,7 @@ export default function App() {
       action,
       category
     };
-    setLogs(prev => [newEntry, ...prev].slice(0, 1000)); // Keep last 1000 logs
+    addLogEntry(newEntry);
   };
 
   const calculateTotals = () => {
@@ -287,7 +435,7 @@ export default function App() {
         action: `Người dùng chuyển tài khoản hoạt động từ "${prevEmail}" sang "${targetUser.email}" (${targetUser.name})`,
         category: 'system'
       };
-      setLogs(prev => [entry, ...prev]);
+      addLogEntry(entry);
     }
   };
 
@@ -334,7 +482,7 @@ export default function App() {
         action: `Đăng nhập thành công bằng tài khoản Google mới: "${targetUser.email}" (${targetUser.name})`,
         category: 'system'
       };
-      setLogs(prev => [entry, ...prev]);
+      addLogEntry(entry);
       setCustomEmail('');
       setCustomName('');
     }
@@ -355,7 +503,7 @@ export default function App() {
         action: `Xác thực OTP thành công. Tài khoản hoạt động chuyển sang: "${pendingUser.email}" (${pendingUser.name})`,
         category: 'system'
       };
-      setLogs(prev => [entry, ...prev]);
+      addLogEntry(entry);
       setPendingUser(null);
       setOtpInput('');
       setOtpError('');
@@ -377,7 +525,7 @@ export default function App() {
     setIsConfirmDeleteOpen(true);
   };
 
-  const handleConfirmDeleteLogs = () => {
+  const handleConfirmDeleteLogs = async () => {
     setIsConfirmDeleteOpen(false);
     const resetLog: LogEntry = {
       id: 'system-reset',
@@ -387,6 +535,13 @@ export default function App() {
       category: 'system'
     };
     setLogs([resetLog]);
+    if (isBackendActive) {
+      await clearAllLogsInBackend();
+      await saveLogToBackend(resetLog);
+    } else if (isFirebaseConfigured) {
+      await clearAllLogsInCloud();
+      await saveLogToCloud(resetLog);
+    }
     setCustomFeedbackMessage({
       type: 'success',
       text: 'Đã xóa thành công toàn bộ lịch sử nhật ký hoạt động trên Timeline.'
@@ -433,6 +588,37 @@ export default function App() {
               <span className="bg-red-500 text-white rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase">Google ID</span>
               <span className="font-mono text-slate-800">{currentUser.email}</span>
             </div>
+
+            {/* Database Sync Status Badge */}
+            {isLoadingCloud ? (
+              <div className="flex items-center gap-1.5 bg-blue-50 rounded-full pl-2 pr-3 py-1 text-xs font-semibold text-blue-800 border border-blue-200">
+                <Loader2 size={12} className="text-blue-500 shrink-0 animate-spin" />
+                <span className="text-[10px] uppercase font-bold tracking-wider">Đang tải Cloud...</span>
+              </div>
+            ) : isBackendActive ? (
+              dbStatus.storageType === 'mongodb' ? (
+                <div className="flex items-center gap-1.5 bg-emerald-50 rounded-full pl-2 pr-3 py-1 text-xs font-semibold text-emerald-800 border border-emerald-200">
+                  <Cloud size={12} className="text-emerald-600 shrink-0 animate-pulse" />
+                  <span className="text-[10px] uppercase font-bold tracking-wider">MongoDB Cloud (Đang chạy)</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5 bg-sky-50 rounded-full pl-2 pr-3 py-1 text-xs font-semibold text-sky-800 border border-sky-200">
+                  <Cloud size={12} className="text-sky-600 shrink-0" />
+                  <span className="text-[10px] uppercase font-bold tracking-wider">Bộ Nhớ Máy Chủ (Local JSON)</span>
+                </div>
+              )
+            ) : isFirebaseConfigured ? (
+              <div className="flex items-center gap-1.5 bg-teal-50 rounded-full pl-2 pr-3 py-1 text-xs font-semibold text-teal-800 border border-teal-200">
+                <Cloud size={12} className="text-teal-600 shrink-0" />
+                <span className="text-[10px] uppercase font-bold tracking-wider">Firebase Firestore (Active)</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5 bg-amber-50 rounded-full pl-2 pr-3 py-1 text-xs font-semibold text-amber-800 border border-amber-200">
+                <CloudLightning size={12} className="text-amber-500 shrink-0 animate-bounce" />
+                <span className="text-[10px] uppercase font-bold tracking-wider font-mono">Offline (Trình duyệt)</span>
+              </div>
+            )}
+
             <span className="text-gray-400 text-xs hidden md:inline">|</span>
             <span className="text-xs text-gray-600 font-medium hidden md:inline">Quyền: {currentUser.role} ({currentUser.name})</span>
           </div>

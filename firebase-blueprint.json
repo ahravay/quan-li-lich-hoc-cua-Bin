@@ -1,0 +1,43 @@
+{
+  "entities": {
+    "MonthData": {
+      "title": "MonthData",
+      "description": "Thống kê dữ liệu học tập và tài chính của một tháng",
+      "type": "object",
+      "properties": {
+        "prevBalance": { "type": "number", "description": "Tồn tháng trước (số buổi)" },
+        "closingBalance": { "type": "number", "description": "Tồn chuyển sang tháng sau" },
+        "pricePerSession": { "type": "number", "description": "Số tiền 1 buổi" },
+        "electricity": { "type": "number", "description": "Tiền điện nước" },
+        "boarding": { "type": "number", "description": "Hỗ trợ bán trú" },
+        "internet": { "type": "number", "description": "Tiền mạng" },
+        "oldDebt": { "type": "number", "description": "Tiền nợ/Tiền học tháng cũ" },
+        "days": { "type": "object", "description": "Nhật ký điểm danh và ghi chú từng ngày" }
+      },
+      "required": ["prevBalance", "closingBalance", "pricePerSession", "electricity", "boarding", "internet", "oldDebt", "days"]
+    },
+    "LogEntry": {
+      "title": "LogEntry",
+      "description": "Nhật ký chỉnh sửa hệ thống",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Mã nhật ký duy nhất" },
+        "timestamp": { "type": "string", "format": "date-time", "description": "Thời gian ghi nhật ký" },
+        "userEmail": { "type": "string", "description": "Email người thực hiện" },
+        "action": { "type": "string", "description": "Hành động chi tiết" },
+        "category": { "type": "string", "enum": ["status", "note", "finance", "system"], "description": "Phân loại nhật ký" }
+      },
+      "required": ["id", "timestamp", "userEmail", "action", "category"]
+    }
+  },
+  "firestore": {
+    "/schedule/{monthId}": {
+      "schema": "MonthData",
+      "description": "Dữ liệu lịch học và tài chính của từng tháng trong năm 2026"
+    },
+    "/logs/{logId}": {
+      "schema": "LogEntry",
+      "description": "Toàn bộ lịch sử hoạt động trên Timeline"
+    }
+  }
+}
