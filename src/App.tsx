@@ -18,7 +18,9 @@ import {
   ShieldAlert,
   Cloud,
   CloudLightning,
-  Loader2
+  Loader2,
+  Lock,
+  Unlock
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
@@ -279,6 +281,34 @@ export default function App() {
   const daysCount = getDaysInMonth(activeMonth);
   const daysArray = Array.from({ length: daysCount }, (_, i) => i + 1);
 
+  const isLocked = !!monthData?.isConfirmed && currentUser.role !== 'Phụ huynh';
+
+  const handleToggleConfirm = () => {
+    const nextState = !monthData?.isConfirmed;
+    setAppData((prev) => {
+      const nextData = { ...prev };
+      nextData[activeMonth] = {
+        ...nextData[activeMonth],
+        isConfirmed: nextState,
+      };
+      return nextData;
+    });
+
+    addLog(
+      'system',
+      nextState
+        ? `Đã chốt (khóa) dữ liệu học tập và tài chính Tháng ${activeMonth} năm ${YEAR}`
+        : `Đã mở chốt (mở khóa) dữ liệu học tập và tài chính Tháng ${activeMonth} năm ${YEAR}`
+    );
+
+    setCustomFeedbackMessage({
+      type: nextState ? 'success' : 'warning',
+      text: nextState
+        ? `✓ Đã chốt số liệu Tháng ${activeMonth} thành công!`
+        : `⚠ Đã mở khóa số liệu Tháng ${activeMonth}!`
+    });
+  };
+
   // Central log dispatcher supporting offline and transaction syncs
   const addLogEntry = (entry: LogEntry) => {
     setLogs(prev => {
@@ -328,6 +358,7 @@ export default function App() {
   const totals = calculateTotals();
 
   const handleUpdateDay = (day: number, data: Partial<DailyData>) => {
+    if (isLocked) return;
     setAppData((prev) => ({
       ...prev,
       [activeMonth]: {
@@ -346,6 +377,13 @@ export default function App() {
   };
 
   const toggleStatus = (day: number) => {
+    if (isLocked) {
+      setCustomFeedbackMessage({
+        type: 'error',
+        text: `⚠️ Số liệu Tháng ${activeMonth} đã được chốt. Giáo viên không có quyền chỉnh sửa!`
+      });
+      return;
+    }
     const current = monthData.days[day]?.status || '';
     const nextMap: Record<string, 'o' | 'X' | ''> = {
       '': 'o',
@@ -362,6 +400,7 @@ export default function App() {
   };
 
   const handleUpdateFinance = (field: keyof MonthData, value: number) => {
+    if (isLocked) return;
     setAppData((prev) => {
       const nextData = { ...prev };
       nextData[activeMonth] = {
@@ -684,6 +723,34 @@ export default function App() {
               </select>
             </div>
 
+            {monthData?.isConfirmed ? (
+              currentUser.role === 'Phụ huynh' ? (
+                <button
+                  onClick={handleToggleConfirm}
+                  className="flex items-center gap-2 bg-amber-600 hover:bg-amber-700 text-white px-4 py-2.5 rounded-lg font-bold transition-colors shadow-sm cursor-pointer hover:shadow-md"
+                >
+                  <Unlock size={18} />
+                  <span>Mở khóa số liệu</span>
+                </button>
+              ) : (
+                <button
+                  disabled
+                  className="flex items-center gap-2 bg-emerald-100 text-emerald-800 border border-emerald-200 px-4 py-2.5 rounded-lg font-bold cursor-not-allowed opacity-80"
+                >
+                  <Lock size={18} />
+                  <span>Số liệu đã chốt</span>
+                </button>
+              )
+            ) : (
+              <button
+                onClick={handleToggleConfirm}
+                className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-lg font-bold transition-colors shadow-sm cursor-pointer hover:shadow-md"
+              >
+                <Lock size={18} />
+                <span>Chốt số liệu</span>
+              </button>
+            )}
+
             <button
               onClick={exportPDF}
               className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded-lg font-bold transition-colors shadow-sm cursor-pointer hover:shadow-md"
@@ -822,6 +889,7 @@ export default function App() {
                           <input
                             type="text"
                             value={monthData.days[day]?.note || ''}
+                            disabled={isLocked}
                             onFocus={() => {
                               setFocusedNote({ day, val: monthData.days[day]?.note || '' });
                             }}
@@ -834,7 +902,7 @@ export default function App() {
                               setFocusedNote(null);
                             }}
                             onChange={(e) => handleUpdateDay(day, { note: e.target.value })}
-                            className="w-full bg-transparent text-center text-[11px] text-gray-600 outline-none focus:ring-1 focus:ring-blue-500 rounded px-1 py-0.5 min-w-[3.5rem] tracking-tight placeholder:opacity-50"
+                            className="w-full bg-transparent text-center text-[11px] text-gray-600 outline-none focus:ring-1 focus:ring-blue-500 rounded px-1 py-0.5 min-w-[3.5rem] tracking-tight placeholder:opacity-50 disabled:opacity-50"
                             placeholder="..."
                           />
                         </td>
@@ -874,6 +942,7 @@ export default function App() {
                   <input
                     type="number"
                     value={monthData.prevBalance || 0}
+                    disabled={isLocked}
                     onFocus={() => setFocusedFinance({ field: 'prevBalance', val: monthData.prevBalance })}
                     onBlur={(e) => {
                       const finalVal = Number(e.target.value) || 0;
@@ -883,7 +952,7 @@ export default function App() {
                       setFocusedFinance(null);
                     }}
                     onChange={(e) => handleUpdateFinance('prevBalance', Number(e.target.value))}
-                    className="w-24 px-3 py-1.5 border border-gray-200 rounded-lg text-right font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                    className="w-24 px-3 py-1.5 border border-gray-200 rounded-lg text-right font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white disabled:bg-gray-150 disabled:opacity-60"
                   />
                 </div>
                 <div className="flex items-center justify-between gap-4 border-b border-dashed border-gray-200 pb-3">
@@ -894,6 +963,7 @@ export default function App() {
                   <input
                     type="number"
                     value={monthData.closingBalance || 0}
+                    disabled={isLocked}
                     onFocus={() => setFocusedFinance({ field: 'closingBalance', val: monthData.closingBalance })}
                     onBlur={(e) => {
                       const finalVal = Number(e.target.value) || 0;
@@ -903,7 +973,7 @@ export default function App() {
                       setFocusedFinance(null);
                     }}
                     onChange={(e) => handleUpdateFinance('closingBalance', Number(e.target.value))}
-                    className="w-24 px-3 py-1.5 border border-gray-200 rounded-lg text-right font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                    className="w-24 px-3 py-1.5 border border-gray-200 rounded-lg text-right font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white disabled:bg-gray-150 disabled:opacity-60"
                   />
                 </div>
                 <div className="flex items-center justify-between gap-4 border-b border-dashed border-gray-200 pb-3">
@@ -911,6 +981,7 @@ export default function App() {
                   <input
                     type="number"
                     value={monthData.pricePerSession || 0}
+                    disabled={isLocked}
                     onFocus={() => setFocusedFinance({ field: 'pricePerSession', val: monthData.pricePerSession })}
                     onBlur={(e) => {
                       const finalVal = Number(e.target.value) || 0;
@@ -920,7 +991,7 @@ export default function App() {
                       setFocusedFinance(null);
                     }}
                     onChange={(e) => handleUpdateFinance('pricePerSession', Number(e.target.value))}
-                    className="w-32 px-3 py-1.5 border border-gray-200 rounded-lg text-right focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white font-mono font-bold text-slate-800"
+                    className="w-32 px-3 py-1.5 border border-gray-200 rounded-lg text-right focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white font-mono font-bold text-slate-800 disabled:bg-gray-150 disabled:opacity-60"
                   />
                 </div>
               </div>
@@ -947,6 +1018,7 @@ export default function App() {
                     <input
                       type="number"
                       value={monthData.electricity || ''}
+                      disabled={isLocked}
                       onFocus={() => setFocusedFinance({ field: 'electricity', val: monthData.electricity })}
                       onBlur={(e) => {
                         const finalVal = Number(e.target.value) || 0;
@@ -956,7 +1028,7 @@ export default function App() {
                         setFocusedFinance(null);
                       }}
                       onChange={(e) => handleUpdateFinance('electricity', Number(e.target.value))}
-                      className="w-28 px-3 py-1 border border-gray-200 rounded text-right focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono text-sm font-semibold"
+                      className="w-28 px-3 py-1 border border-gray-200 rounded text-right focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono text-sm font-semibold disabled:bg-gray-150 disabled:opacity-60"
                       placeholder="0"
                     />
                     <span className="text-gray-500 font-medium">đ</span>
@@ -969,6 +1041,7 @@ export default function App() {
                     <input
                       type="number"
                       value={monthData.boarding || ''}
+                      disabled={isLocked}
                       onFocus={() => setFocusedFinance({ field: 'boarding', val: monthData.boarding })}
                       onBlur={(e) => {
                         const finalVal = Number(e.target.value) || 0;
@@ -978,7 +1051,7 @@ export default function App() {
                         setFocusedFinance(null);
                       }}
                       onChange={(e) => handleUpdateFinance('boarding', Number(e.target.value))}
-                      className="w-28 px-3 py-1 border border-gray-200 rounded text-right focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono text-sm font-semibold"
+                      className="w-28 px-3 py-1 border border-gray-200 rounded text-right focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono text-sm font-semibold disabled:bg-gray-150 disabled:opacity-60"
                       placeholder="0"
                     />
                     <span className="text-gray-500 font-medium">đ</span>
@@ -991,6 +1064,7 @@ export default function App() {
                     <input
                       type="number"
                       value={monthData.internet || ''}
+                      disabled={isLocked}
                       onFocus={() => setFocusedFinance({ field: 'internet', val: monthData.internet })}
                       onBlur={(e) => {
                         const finalVal = Number(e.target.value) || 0;
@@ -1000,7 +1074,7 @@ export default function App() {
                         setFocusedFinance(null);
                       }}
                       onChange={(e) => handleUpdateFinance('internet', Number(e.target.value))}
-                      className="w-28 px-3 py-1 border border-gray-200 rounded text-right focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono text-sm font-semibold"
+                      className="w-28 px-3 py-1 border border-gray-200 rounded text-right focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono text-sm font-semibold disabled:bg-gray-150 disabled:opacity-60"
                       placeholder="0"
                     />
                     <span className="text-gray-500 font-medium">đ</span>
@@ -1013,6 +1087,7 @@ export default function App() {
                     <input
                       type="number"
                       value={monthData.oldDebt || ''}
+                      disabled={isLocked}
                       onFocus={() => setFocusedFinance({ field: 'oldDebt', val: monthData.oldDebt })}
                       onBlur={(e) => {
                         const finalVal = Number(e.target.value) || 0;
@@ -1022,7 +1097,7 @@ export default function App() {
                         setFocusedFinance(null);
                       }}
                       onChange={(e) => handleUpdateFinance('oldDebt', Number(e.target.value))}
-                      className="w-28 px-3 py-1 border border-gray-200 rounded text-right focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono text-sm font-semibold"
+                      className="w-28 px-3 py-1 border border-gray-200 rounded text-right focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono text-sm font-semibold disabled:bg-gray-150 disabled:opacity-60"
                       placeholder="0"
                     />
                     <span className="text-gray-500 font-medium">đ</span>

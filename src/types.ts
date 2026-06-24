@@ -12,6 +12,7 @@ export type MonthData = {
   internet: number;       // Tiền mạng
   oldDebt: number;        // Tiền nợ/Tiền học tháng cũ
   days: Record<number, DailyData>;
+  isConfirmed?: boolean;  // Trạng thái chốt dữ liệu
 };
 
 export type AppState = Record<number, MonthData>;
@@ -33,6 +34,7 @@ export const getInitialMonthData = (): MonthData => ({
   internet: 0,
   oldDebt: 0,
   days: {},
+  isConfirmed: false,
 });
 
 export const MEAL_PRICE = 25000; // 25.000đ/buổi
